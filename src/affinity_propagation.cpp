@@ -241,7 +241,9 @@ void AffinityPropagation::setSimilarityMatrix()
         );
 
         double median_similarity = median_vec[median_vec.size() / 2];
-        median_similarity = 22; // DEBUG
+
+        // USING MINIMUM INSTEAD OF MEDIAN
+        median_similarity = median_vec[median_vec.size() - 1];
 
         // Set median to the diagonal
 #pragma omp parallel for default(none) shared(similarity_matrix, digit_count, median_similarity)
@@ -291,15 +293,20 @@ int AffinityPropagation::run(const int max_iter)
 
                 // R(i, k) = s(i, k) - max_kk(a(i, kk) + s(i, kk))
                 const auto s_i_k = *halfMatrixDiagAtChecked(similarity_matrix, i, k);
-                *matrixAt(responsibility_matrix, i, k) = s_i_k - max_kk;
+
+                // Add damping
+                const double old_r_ik = *matrixAt(R_matrix, i, k);
+                const double new_r_ik = s_i_k - max_kk;
+                *matrixAt(responsibility_matrix, i, k) = (1.0 - lambda) * new_r_ik + lambda * old_r_ik;
             }
         }
 
+        R_matrix = this->responsibility_matrix;
 
         //
         // A(k, k)
         //
-#pragma omp parallel for default(none) shared(similarity_matrix, R_matrix, availability_matrix, digit_count)
+#pragma omp parallel for default(none) shared(similarity_matrix, R_matrix, A_matrix, availability_matrix, digit_count)
         for (int k = 0; k < digit_count; ++k)
         {
             // sum(max(0, R(ii, k))) for ii != k
@@ -317,8 +324,14 @@ int AffinityPropagation::run(const int max_iter)
                 );
             }
             
-            *matrixAt(availability_matrix, k, k) = sum;
+            const double raw_a_kk = sum;
+
+            // Add damping
+            const double old_a_kk = *matrixAt(A_matrix, k, k);
+            const double new_a_kk = (1.0 - lambda) * raw_a_kk + lambda * old_a_kk;
+            *matrixAt(availability_matrix, k, k) = new_a_kk;
         }
+
 
 #pragma omp parallel for default(none) shared(similarity_matrix, R_matrix, A_matrix, responsibility_matrix, availability_matrix, digit_count)
         for (int i = 0; i < digit_count; ++i)
@@ -354,14 +367,19 @@ int AffinityPropagation::run(const int max_iter)
                 }
 
                 // min(0, R(k, k) + sum(max(0, R(ii, k))) for ii != i)
-                *matrixAt(availability_matrix, i, k) = std::min(
+                const double raw_A = std::min(
                     0.0,
                     sum
                 );
+
+                // Add damping
+                // A(i, k) = (1 - lambda) * A(i, k) + lambda * raw_A
+                const double old_A = *matrixAt(A_matrix, i, k);
+                const double new_A = (1.0 - lambda) * raw_A + lambda * old_A;
+                *matrixAt(availability_matrix, i, k) = new_A;
             }
         }
 
-        R_matrix = this->responsibility_matrix;
         A_matrix = this->availability_matrix;
 
 // #pragma omp critical

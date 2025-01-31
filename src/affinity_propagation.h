@@ -11,6 +11,8 @@
 
 
 class AffinityPropagation {
+    double lambda = 0.5; 
+    
     int digit_count;
     int matrix_size;
     int half_matrix_size;

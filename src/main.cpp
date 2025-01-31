@@ -6,7 +6,7 @@
 int main()
 {
     auto start_time = std::chrono::high_resolution_clock::now();
-    AffinityPropagation ap("mnist_test.csv", true);
+    AffinityPropagation ap("example.csv", true);
     auto end_time = std::chrono::high_resolution_clock::now();
     std::cout <<
         "T(parallel file read): " <<
@@ -24,7 +24,7 @@ int main()
         std::endl;
 
     start_time = std::chrono::high_resolution_clock::now();
-    int iters = ap.run(1);
+    int iters = ap.run(100);
     end_time = std::chrono::high_resolution_clock::now();
     std::cout << "Iterations: " << iters << std::endl;
     std::cout <<
