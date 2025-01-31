@@ -30,8 +30,10 @@ class AffinityPropagation {
     static size_t getFileSize(const char* filename);
     inline double* matrixAt(std::vector<double>& matrix, int i, int j) const;
     inline static double* halfMatrixAt(std::vector<double>& matrix, int i, int j);
-    inline static double* halfMatrixDiagAt(std::vector<double>& matrix, int i, int j);
-    static double* halfMatrixDiagAtChecked(std::vector<double>& matrix, int i, int j);
+    
+    
+    // inline static double* halfMatrixDiagAt(std::vector<double>& matrix, int i, int j);
+    // static double* halfMatrixDiagAtChecked(std::vector<double>& matrix, int i, int j);
 
 public:
     AffinityPropagation(const char* filename, bool parallel);

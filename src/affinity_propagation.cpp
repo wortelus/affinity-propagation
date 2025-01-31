@@ -5,6 +5,7 @@
 #include "affinity_propagation.h"
 
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -33,31 +34,31 @@ size_t AffinityPropagation::getFileSize(const char* filename)
     return st.st_size;
 }
 
-double* AffinityPropagation::matrixAt(std::vector<double>& matrix, int i, int j) const
+inline double* AffinityPropagation::matrixAt(std::vector<double>& matrix, int i, int j) const
 {
     return &matrix[i * digit_count + j];
 }
 
 /// IMPORTANT: Ensure matrix doesn't reallocate, doesn't run out of bounds, and j > i
-double* AffinityPropagation::halfMatrixAt(std::vector<double>& matrix, const int i, const int j)
+inline double* AffinityPropagation::halfMatrixAt(std::vector<double>& matrix, const int i, const int j)
 {
     return &matrix[j * (j - 1) / 2 + i];
 }
 
 
-/// IMPORTANT: Ensure matrix doesn't reallocate, doesn't run out of bounds, and j > i
-inline double* AffinityPropagation::halfMatrixDiagAt(std::vector<double>& matrix, const int i, const int j)
-{
-    return &matrix[j * (j + 1) / 2 + i];
-}
-
-inline double* AffinityPropagation::halfMatrixDiagAtChecked(std::vector<double>& matrix, const int i, const int j)
-{
-    if (i <= j)
-        return &matrix[j * (j + 1) / 2 + i];
-    else
-        return &matrix[i * (i + 1) / 2 + j];
-}
+// /// IMPORTANT: Ensure matrix doesn't reallocate, doesn't run out of bounds, and j > i
+// inline double* AffinityPropagation::halfMatrixDiagAt(std::vector<double>& matrix, const int i, const int j)
+// {
+//     return &matrix[j * (j + 1) / 2 + i];
+// }
+//
+// inline double* AffinityPropagation::halfMatrixDiagAtChecked(std::vector<double>& matrix, const int i, const int j)
+// {
+//     if (i <= j)
+//         return &matrix[j * (j + 1) / 2 + i];
+//     else
+//         return &matrix[i * (i + 1) / 2 + j];
+// }
 
 AffinityPropagation::AffinityPropagation(const char* filename, bool parallel)
 {
@@ -210,7 +211,7 @@ AffinityPropagation::AffinityPropagation(const char* filename, bool parallel)
 
 void AffinityPropagation::setSimilarityMatrix()
 {
-    this->similarity_matrix = std::vector(half_matrix_dia_size, 0.0);
+    this->similarity_matrix = std::vector(matrix_size, 0.0);
     std::vector median_vec(half_matrix_size, 0.0);
 
     // #pragma omp parallel for default(none) shared(digits, similarity_matrix, median_vec)
@@ -229,7 +230,8 @@ void AffinityPropagation::setSimilarityMatrix()
             }
 
             *halfMatrixAt(median_vec, i, j) = distance;
-            *halfMatrixDiagAt(similarity_matrix, i, j) = -distance;
+            *matrixAt(similarity_matrix, i, j) = -distance;
+            *matrixAt(similarity_matrix, j, i) = -distance;
         }
     }
 
@@ -250,7 +252,7 @@ void AffinityPropagation::setSimilarityMatrix()
         for (int i = 0; i < this->digit_count; ++i)
         {
             // this->similarity_matrix[i * this->digit_count + i] = -median_similarity;
-            *halfMatrixDiagAt(similarity_matrix, i, i) = -median_similarity;
+            *matrixAt(similarity_matrix, i, i) = -median_similarity;
         }
     }
 }
@@ -260,13 +262,17 @@ int AffinityPropagation::run(const int max_iter)
     this->responsibility_matrix = std::vector(matrix_size, 0.0);
     this->availability_matrix = std::vector(matrix_size, 0.0);
 
-    std::vector<double> R_matrix = this->responsibility_matrix;
-    std::vector<double> A_matrix = this->availability_matrix;
+    std::vector<double> R_old = this->responsibility_matrix;
+    std::vector<double> A_old = this->availability_matrix;
 
     int iter = 0;
     for (; iter < max_iter; ++iter)
     {
-#pragma omp parallel for default(none) shared(similarity_matrix, R_matrix, A_matrix, responsibility_matrix, availability_matrix, digit_count)
+        // 1)
+        // R(i, k)
+        //
+        auto start_time = std::chrono::high_resolution_clock::now();
+#pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, responsibility_matrix, availability_matrix, digit_count)
         for (int i = 0; i < digit_count; ++i)
         {
             for (int k = 0; k < digit_count; ++k)
@@ -277,14 +283,15 @@ int AffinityPropagation::run(const int max_iter)
 
                 // max_kk(a(i, kk) + s(i, kk))
                 double max_kk = -std::numeric_limits<double>::infinity();
+#pragma omp simd reduction(max:max_kk)
                 for (int kk = 0; kk < digit_count; ++kk)
                 {
                     // kk != k
                     if (kk == k)
                         continue;
 
-                    const auto a_i_kk = *matrixAt(A_matrix, i, kk);
-                    const auto s_i_kk = *halfMatrixDiagAtChecked(similarity_matrix, i, kk);
+                    const auto a_i_kk = *matrixAt(A_old, i, kk);
+                    const auto s_i_kk = *matrixAt(similarity_matrix, i, kk);
                     max_kk = std::max(
                         max_kk,
                         a_i_kk + s_i_kk
@@ -292,21 +299,36 @@ int AffinityPropagation::run(const int max_iter)
                 }
 
                 // R(i, k) = s(i, k) - max_kk(a(i, kk) + s(i, kk))
-                const auto s_i_k = *halfMatrixDiagAtChecked(similarity_matrix, i, k);
+                const auto s_i_k = *matrixAt(similarity_matrix, i, k);
+                const double raw_r_ik = s_i_k - max_kk;
 
                 // Add damping
-                const double old_r_ik = *matrixAt(R_matrix, i, k);
-                const double new_r_ik = s_i_k - max_kk;
-                *matrixAt(responsibility_matrix, i, k) = (1.0 - lambda) * new_r_ik + lambda * old_r_ik;
+#ifdef USE_DAMPING
+                const double old_r_ik = *matrixAt(R_old, i, k);
+                const double new_r_ik = (1.0 - lambda) * raw_r_ik + lambda * old_r_ik;
+                *matrixAt(responsibility_matrix, i, k) = new_r_ik;
+#else
+                *matrixAt(responsibility_matrix, i, k) = raw_r_ik;
+#endif
+                
             }
         }
+        auto end_time = std::chrono::high_resolution_clock::now();
+        std::cout << "T(parallel R(i, k) matrix): " <<
+            std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() <<
+            " ms" <<
+            std::endl;
 
-        R_matrix = this->responsibility_matrix;
-
+        // 1b)
+        // Update R(i, k)
         //
+        R_old = this->responsibility_matrix;
+
+        // 2)
         // A(k, k)
         //
-#pragma omp parallel for default(none) shared(similarity_matrix, R_matrix, A_matrix, availability_matrix, digit_count)
+        start_time = std::chrono::high_resolution_clock::now();
+#pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, availability_matrix, digit_count)
         for (int k = 0; k < digit_count; ++k)
         {
             // sum(max(0, R(ii, k))) for ii != k
@@ -316,7 +338,7 @@ int AffinityPropagation::run(const int max_iter)
                 if (ii == k)
                     continue;
 
-                const auto r_ii_k = *matrixAt(R_matrix, ii, k);
+                const auto r_ii_k = *matrixAt(R_old, ii, k);
 
                 sum += std::max(
                     0.0,
@@ -327,13 +349,26 @@ int AffinityPropagation::run(const int max_iter)
             const double raw_a_kk = sum;
 
             // Add damping
-            const double old_a_kk = *matrixAt(A_matrix, k, k);
+#ifdef USE_DAMPING
+            const double old_a_kk = *matrixAt(A_old, k, k);
             const double new_a_kk = (1.0 - lambda) * raw_a_kk + lambda * old_a_kk;
             *matrixAt(availability_matrix, k, k) = new_a_kk;
+#else
+            *matrixAt(availability_matrix, k, k) = raw_a_kk;
+#endif
         }
+        end_time = std::chrono::high_resolution_clock::now();
+        std::cout << "T(parallel A(k, k) matrix): " <<
+            std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() <<
+            " ms" <<
+            std::endl;
 
 
-#pragma omp parallel for default(none) shared(similarity_matrix, R_matrix, A_matrix, responsibility_matrix, availability_matrix, digit_count)
+        // 3)
+        // A(i, k) for i != k
+        //
+        start_time = std::chrono::high_resolution_clock::now();        
+#pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, responsibility_matrix, availability_matrix, digit_count)
         for (int i = 0; i < digit_count; ++i)
         {
             for (int k = 0; k < digit_count; ++k)
@@ -349,7 +384,7 @@ int AffinityPropagation::run(const int max_iter)
                 // R(k, k) + sum(max(0, R(ii, k))) for ii != i
                 //
                 // R(k, k)
-                const auto r_k_k = *matrixAt(R_matrix, k, k);
+                const auto r_k_k = *matrixAt(R_old, k, k);
                 // sum_max_R_ii_k
                 double sum = r_k_k;
                 for (int ii = 0; ii < digit_count; ++ii)
@@ -358,7 +393,7 @@ int AffinityPropagation::run(const int max_iter)
                     if (ii == i || ii == k)
                         continue;
 
-                    const auto r_ii_k = *matrixAt(R_matrix, ii, k);
+                    const auto r_ii_k = *matrixAt(R_old, ii, k);
 
                     sum += std::max(
                         0.0,
@@ -373,19 +408,25 @@ int AffinityPropagation::run(const int max_iter)
                 );
 
                 // Add damping
-                // A(i, k) = (1 - lambda) * A(i, k) + lambda * raw_A
-                const double old_A = *matrixAt(A_matrix, i, k);
+#ifdef USE_DAMPING
+                const double old_A = *matrixAt(A_old, i, k);
                 const double new_A = (1.0 - lambda) * raw_A + lambda * old_A;
                 *matrixAt(availability_matrix, i, k) = new_A;
+#else
+                *matrixAt(availability_matrix, i, k) = raw_A;
+#endif
             }
         }
+        end_time = std::chrono::high_resolution_clock::now();
+        std::cout << "T(parallel A(i, k) matrix): " <<
+            std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() <<
+            " ms" <<
+            std::endl;
 
-        A_matrix = this->availability_matrix;
-
-// #pragma omp critical
-//         {
-//             std::cout << "Swapped from iter " << iter << " into " << iter + 1 << std::endl;
-//         }
+        // 3b)
+        // Update A(i, k) and A(k, k)
+        //
+        A_old = this->availability_matrix;
     }
 
     return iter;

@@ -6,7 +6,7 @@
 int main()
 {
     auto start_time = std::chrono::high_resolution_clock::now();
-    AffinityPropagation ap("example.csv", true);
+    AffinityPropagation ap("mnist_mini.csv", true);
     auto end_time = std::chrono::high_resolution_clock::now();
     std::cout <<
         "T(parallel file read): " <<
@@ -24,7 +24,7 @@ int main()
         std::endl;
 
     start_time = std::chrono::high_resolution_clock::now();
-    int iters = ap.run(100);
+    const int iters = ap.run(30);
     end_time = std::chrono::high_resolution_clock::now();
     std::cout << "Iterations: " << iters << std::endl;
     std::cout <<
@@ -33,7 +33,15 @@ int main()
         " ms" <<
         std::endl;
 
+
+    start_time = std::chrono::high_resolution_clock::now();
     ap.C_matrix();
+    end_time = std::chrono::high_resolution_clock::now();
+    std::cout <<
+        "T(parallel C matrix): " <<
+        std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() <<
+        " ms" <<
+        std::endl;
 
     ap.printClusterCounts();
 
