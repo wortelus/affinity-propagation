@@ -271,7 +271,9 @@ int AffinityPropagation::run(const int max_iter)
         // 1)
         // R(i, k)
         //
+#ifdef FINE_TIMES
         auto start_time = std::chrono::high_resolution_clock::now();
+#endif
 #pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, responsibility_matrix, availability_matrix, digit_count)
         for (int i = 0; i < digit_count; ++i)
         {
@@ -313,11 +315,13 @@ int AffinityPropagation::run(const int max_iter)
                 
             }
         }
+#ifdef FINE_TIMES
         auto end_time = std::chrono::high_resolution_clock::now();
         std::cout << "T(parallel R(i, k) matrix): " <<
             std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() <<
             " ms" <<
             std::endl;
+#endif
 
         // 1b)
         // Update R(i, k)
@@ -327,7 +331,9 @@ int AffinityPropagation::run(const int max_iter)
         // 2)
         // A(k, k)
         //
+#ifdef FINE_TIMES
         start_time = std::chrono::high_resolution_clock::now();
+#endif
 #pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, availability_matrix, digit_count)
         for (int k = 0; k < digit_count; ++k)
         {
@@ -357,17 +363,21 @@ int AffinityPropagation::run(const int max_iter)
             *matrixAt(availability_matrix, k, k) = raw_a_kk;
 #endif
         }
+#ifdef FINE_TIMES
         end_time = std::chrono::high_resolution_clock::now();
         std::cout << "T(parallel A(k, k) matrix): " <<
             std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() <<
             " ms" <<
             std::endl;
+#endif
 
 
         // 3)
         // A(i, k) for i != k
         //
-        start_time = std::chrono::high_resolution_clock::now();        
+#ifdef FINE_TIMES
+        start_time = std::chrono::high_resolution_clock::now();
+#endif
 #pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, responsibility_matrix, availability_matrix, digit_count)
         for (int i = 0; i < digit_count; ++i)
         {
@@ -417,11 +427,13 @@ int AffinityPropagation::run(const int max_iter)
 #endif
             }
         }
+#ifdef FINE_TIMES
         end_time = std::chrono::high_resolution_clock::now();
         std::cout << "T(parallel A(i, k) matrix): " <<
             std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() <<
             " ms" <<
             std::endl;
+#endif
 
         // 3b)
         // Update A(i, k) and A(k, k)
