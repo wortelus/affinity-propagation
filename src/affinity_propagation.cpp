@@ -274,36 +274,47 @@ int AffinityPropagation::run(const int max_iter)
 #ifdef FINE_TIMES
         auto start_time = std::chrono::high_resolution_clock::now();
 #endif
-#pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, responsibility_matrix, availability_matrix, digit_count)
+#pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, responsibility_matrix, digit_count)
         for (int i = 0; i < digit_count; ++i)
         {
+            //
+            // Responsibility matrix update
+            //
+
+            // precompute
+            // max_kk(a(i, kk) + s(i, kk))
+            std::vector<double> max_i_kk(digit_count);
+            for (int kk = 0; kk < digit_count; ++kk)
+            {
+                const auto a_i_kk = *matrixAt(A_old, i, kk);
+                const auto s_i_kk = *matrixAt(similarity_matrix, i, kk);
+                max_i_kk[kk] = a_i_kk + s_i_kk;
+            }
+
+            // Choose first & second max from max_i_kk
+            int first_index = -1;
+            double first = -std::numeric_limits<double>::infinity();
+            double second = -std::numeric_limits<double>::infinity();
             for (int k = 0; k < digit_count; ++k)
             {
-                //
-                // Responsibility matrix update
-                //
-
-                // max_kk(a(i, kk) + s(i, kk))
-                double max_kk = -std::numeric_limits<double>::infinity();
-                // was hurting performance (50% worse), commented out
-                // #pragma omp simd reduction(max:max_kk)
-                for (int kk = 0; kk < digit_count; ++kk)
+                if (max_i_kk[k] > first)
                 {
-                    // kk != k
-                    if (kk == k)
-                        continue;
-
-                    const auto a_i_kk = *matrixAt(A_old, i, kk);
-                    const auto s_i_kk = *matrixAt(similarity_matrix, i, kk);
-                    max_kk = std::max(
-                        max_kk,
-                        a_i_kk + s_i_kk
-                    );
+                    second = first;
+                    first = max_i_kk[k];
+                    first_index = k;
                 }
-
-                // R(i, k) = s(i, k) - max_kk(a(i, kk) + s(i, kk))
+                else if (max_i_kk[k] > second)
+                {
+                    second = max_i_kk[k];
+                }
+            }
+            
+            for (int k = 0; k < digit_count; ++k)
+            {
+                const double chosen_max_i_kk = k != first_index ? first : second;
+                
                 const auto s_i_k = *matrixAt(similarity_matrix, i, k);
-                const double raw_r_ik = s_i_k - max_kk;
+                const double raw_r_ik = s_i_k - chosen_max_i_kk;
 
                 // Add damping
 #ifdef USE_DAMPING
