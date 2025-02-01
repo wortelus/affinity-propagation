@@ -285,7 +285,8 @@ int AffinityPropagation::run(const int max_iter)
 
                 // max_kk(a(i, kk) + s(i, kk))
                 double max_kk = -std::numeric_limits<double>::infinity();
-#pragma omp simd reduction(max:max_kk)
+                // was hurting performance (50% worse), commented out
+                // #pragma omp simd reduction(max:max_kk)
                 for (int kk = 0; kk < digit_count; ++kk)
                 {
                     // kk != k
@@ -312,7 +313,6 @@ int AffinityPropagation::run(const int max_iter)
 #else
                 *matrixAt(responsibility_matrix, i, k) = raw_r_ik;
 #endif
-                
             }
         }
 #ifdef FINE_TIMES
@@ -351,7 +351,7 @@ int AffinityPropagation::run(const int max_iter)
                     r_ii_k
                 );
             }
-            
+
             const double raw_a_kk = sum;
 
             // Add damping
@@ -379,38 +379,40 @@ int AffinityPropagation::run(const int max_iter)
         start_time = std::chrono::high_resolution_clock::now();
 #endif
 #pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, responsibility_matrix, availability_matrix, digit_count)
-        for (int i = 0; i < digit_count; ++i)
+        for (int k = 0; k < digit_count; ++k)
         {
-            for (int k = 0; k < digit_count; ++k)
-            {
-                //
-                // Availability matrix update
-                //
+            // Sum for A(i, k)
 
+            // R(k, k) + sum(max(0, R(ii, k))) for ii != i
+            //
+            // R(k, k)
+            const auto r_k_k = *matrixAt(R_old, k, k);
+            // sum_max_R_ii_k
+            double sum = r_k_k;
+            for (int ii = 0; ii < digit_count; ++ii)
+            {
+                // two conditions:
+                // ii != k
+                // ii != i --- WARNING, MUST SUBTRACK R(i, k) FROM SUM LATER
+                if (ii == k)
+                    continue;
+
+                const auto r_ii_k = *matrixAt(R_old, ii, k);
+
+                sum += std::max(
+                    0.0,
+                    r_ii_k
+                );
+            }
+
+            for (int i = 0; i < digit_count; ++i)
+            {
                 // Prevent overwrite of diagonal (A(k, k) is calculated next)
                 if (i == k)
                     continue;
 
-                // R(k, k) + sum(max(0, R(ii, k))) for ii != i
-                //
-                // R(k, k)
-                const auto r_k_k = *matrixAt(R_old, k, k);
-                // sum_max_R_ii_k
-                double sum = r_k_k;
-                for (int ii = 0; ii < digit_count; ++ii)
-                {
-                    // ii != k also added by me
-                    if (ii == i || ii == k)
-                        continue;
-
-                    const auto r_ii_k = *matrixAt(R_old, ii, k);
-
-                    sum += std::max(
-                        0.0,
-                        r_ii_k
-                    );
-                }
-
+                // SUBTRACT R(i, k) FROM SUM (ii != i)
+                sum -= std::max(0., *matrixAt(R_old, i, k));
                 // min(0, R(k, k) + sum(max(0, R(ii, k))) for ii != i)
                 const double raw_A = std::min(
                     0.0,
@@ -459,23 +461,28 @@ void AffinityPropagation::C_matrix()
     }
 }
 
-void AffinityPropagation::printClusterCounts() {
+void AffinityPropagation::printClusterCounts()
+{
     std::unordered_map<int, int> counts;
-    for (int i = 0; i < digit_count; ++i) {
+    for (int i = 0; i < digit_count; ++i)
+    {
         int highest_c = -1;
         double max_c = -std::numeric_limits<double>::infinity();
-        
-        for (int k = 0; k < digit_count; ++k) {
-            if (*matrixAt(c_matrix, i, k) > max_c) {
+
+        for (int k = 0; k < digit_count; ++k)
+        {
+            if (*matrixAt(c_matrix, i, k) > max_c)
+            {
                 max_c = *matrixAt(c_matrix, i, k);
                 highest_c = k;
             }
         }
         counts[highest_c]++;
     }
-    
+
     std::cout << "Cluster Counts:" << std::endl;
-    for (const auto& pair : counts) {
+    for (const auto& pair : counts)
+    {
         std::cout << "Cluster " << pair.first << ": " << pair.second << " elements" << std::endl;
     }
 
