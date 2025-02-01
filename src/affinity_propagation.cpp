@@ -2,7 +2,6 @@
 // Created by wortelus on 31.01.2025.
 //
 
-#include "affinity_propagation.h"
 
 #include <algorithm>
 #include <chrono>
@@ -16,7 +15,11 @@
 #include <omp.h>
 #include <unordered_map>
 
+#include "affinity_propagation.h"
 #include "consts.h"
+
+// AVX2
+#include <immintrin.h>
 
 ///
 /// @brief Get file size
@@ -284,12 +287,35 @@ int AffinityPropagation::run(const int max_iter)
             // precompute
             // max_kk(a(i, kk) + s(i, kk))
             std::vector<double> max_i_kk(digit_count);
+
+            // Either OpenMP SIMD or AVX2
+            // (pouze jako malá demonstrace :)) rozdíl v rychlosti jsem nezaznamenal
+#ifdef __AVX2__
+            int kk = 0;
+            // process 4 doubles at a time
+            for (; kk + 3 < digit_count; kk += 4)
+            {
+                __m256d a_vals = _mm256_loadu_pd(&A_old[i * digit_count + kk]);
+                __m256d s_vals = _mm256_loadu_pd(&similarity_matrix[i * digit_count + kk]);
+                __m256d sum_vals = _mm256_add_pd(a_vals, s_vals);
+                _mm256_storeu_pd(&max_i_kk[kk], sum_vals);
+            }
+
+            // Remainder for anything not a multiple of 4
+            for (; kk < digit_count; ++kk)
+            {
+                max_i_kk[kk] = A_old[i * digit_count + kk] + similarity_matrix[i * digit_count + kk];
+            }
+#else
+#pragma omp simd
             for (int kk = 0; kk < digit_count; ++kk)
             {
                 const auto a_i_kk = *matrixAt(A_old, i, kk);
                 const auto s_i_kk = *matrixAt(similarity_matrix, i, kk);
                 max_i_kk[kk] = a_i_kk + s_i_kk;
             }
+#endif
+
 
             // Choose first & second max from max_i_kk
             int first_index = -1;
@@ -308,11 +334,11 @@ int AffinityPropagation::run(const int max_iter)
                     second = max_i_kk[k];
                 }
             }
-            
+
             for (int k = 0; k < digit_count; ++k)
             {
                 const double chosen_max_i_kk = k != first_index ? first : second;
-                
+
                 const auto s_i_k = *matrixAt(similarity_matrix, i, k);
                 const double raw_r_ik = s_i_k - chosen_max_i_kk;
 
