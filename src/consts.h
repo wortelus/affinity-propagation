@@ -9,7 +9,7 @@
 
 // If you want individual times for R(i, k), A(k, k) and A(i, k), uncomment following line
 // Pokud chceme jednotlivé časy pro R(i, k), A(k, k) a A(i, k), pak odkomentuj následující řádek
-#define FINE_TIMES 1
+#define VERBOSE 1
 
 // MNIST dataset has 28x28 pixels
 static constexpr size_t MNIST_PIXELS = 28;

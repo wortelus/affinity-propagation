@@ -106,11 +106,12 @@ AffinityPropagation::AffinityPropagation(const char* filename, bool parallel)
         size_t start = start_offset + tid * chunk_size;
         size_t end = tid != num_threads - 1 ? std::min(start + chunk_size, file_size) : file_size;
 
-        // DEBUG
-        // #pragma omp critical
-        //         {
-        //             std::cout << "Thread " << tid << " processing chunk " << start << " - " << end << std::endl;
-        //         }
+#ifdef VERBOSE
+#pragma omp critical
+        {
+            std::cout << "Thread " << tid << " processing chunk " << start << " - " << end << std::endl;
+        }
+#endif
 
         // Each thread opens its own file stream
         std::ifstream ifs(filename, std::ios::binary);
@@ -173,7 +174,10 @@ AffinityPropagation::AffinityPropagation(const char* filename, bool parallel)
                 token = std::strtok(nullptr, ",");
                 if (token == nullptr)
                 {
-                    std::cerr << "Thread " << tid << " failed to parse line: " << line << std::endl;
+#pragma omp critical
+                    {
+                        std::cerr << "Thread " << tid << " failed to parse line: " << line << std::endl;
+                    }
                     break;
                 }
                 pixel = static_cast<uint8_t>(std::stoi(token));
@@ -217,7 +221,7 @@ void AffinityPropagation::setSimilarityMatrix()
     this->similarity_matrix = std::vector(matrix_size, 0.0);
     std::vector median_vec(half_matrix_size, 0.0);
 
-    // #pragma omp parallel for default(none) shared(digits, similarity_matrix, median_vec)
+#pragma omp parallel for default(none) shared(digits, similarity_matrix, median_vec)
     for (int i = 0; i < this->digit_count; ++i)
     {
         // Only one side of the diagonal
@@ -274,7 +278,7 @@ int AffinityPropagation::run(const int max_iter)
         // 1)
         // R(i, k)
         //
-#ifdef FINE_TIMES
+#ifdef VERBOSE
         auto start_time = std::chrono::high_resolution_clock::now();
 #endif
 #pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, responsibility_matrix, digit_count)
@@ -352,7 +356,7 @@ int AffinityPropagation::run(const int max_iter)
 #endif
             }
         }
-#ifdef FINE_TIMES
+#ifdef VERBOSE
         auto end_time = std::chrono::high_resolution_clock::now();
         std::cout << "T(parallel R(i, k) matrix): " <<
             std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() <<
@@ -368,7 +372,7 @@ int AffinityPropagation::run(const int max_iter)
         // 2)
         // A(k, k)
         //
-#ifdef FINE_TIMES
+#ifdef VERBOSE
         start_time = std::chrono::high_resolution_clock::now();
 #endif
 #pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, availability_matrix, digit_count)
@@ -400,7 +404,7 @@ int AffinityPropagation::run(const int max_iter)
             *matrixAt(availability_matrix, k, k) = raw_a_kk;
 #endif
         }
-#ifdef FINE_TIMES
+#ifdef VERBOSE
         end_time = std::chrono::high_resolution_clock::now();
         std::cout << "T(parallel A(k, k) matrix): " <<
             std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() <<
@@ -412,7 +416,7 @@ int AffinityPropagation::run(const int max_iter)
         // 3)
         // A(i, k) for i != k
         //
-#ifdef FINE_TIMES
+#ifdef VERBOSE
         start_time = std::chrono::high_resolution_clock::now();
 #endif
 #pragma omp parallel for default(none) shared(similarity_matrix, R_old, A_old, responsibility_matrix, availability_matrix, digit_count)
@@ -466,7 +470,7 @@ int AffinityPropagation::run(const int max_iter)
 #endif
             }
         }
-#ifdef FINE_TIMES
+#ifdef VERBOSE
         end_time = std::chrono::high_resolution_clock::now();
         std::cout << "T(parallel A(i, k) matrix): " <<
             std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() <<
